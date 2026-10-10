@@ -1,0 +1,74 @@
+name: Fetch and Format News Feed
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight UTC
+  workflow_dispatch: # Allows you to manually trigger the workflow from the Actions tab
+
+permissions:
+  contents: write # Grants the workflow permission to commit changes back to the repository
+
+jobs:
+  fetch-news-job:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Fetch and Process News
+        run: |
+          # Create the destination directory if it doesn't exist
+          mkdir -p News
+
+          echo "Fetching RSS Feeds..."
+          
+          # Fetch RSS XML data using curl
+          SPORTS_FEED=$(curl -s "https://nytimes.com")
+          TECH_FEED=$(curl -s "https://nytimes.com")
+          TRAVEL_FEED=$(curl -s "https://nytimes.com")
+
+          # Extract up to 3 article titles from each feed using a simple regex pattern match
+          SPORTS_TITLES=$(echo "$SPORTS_FEED" | grep -oPm1 -e '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' -e '(?<=<title>).*?(?=</title>)' | head -n 4 | tail -n 3)
+          TECH_TITLES=$(echo "$TECH_FEED" | grep -oPm1 -e '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' -e '(?<=<title>).*?(?=</title>)' | head -n 4 | tail -n 3)
+          TRAVEL_TITLES=$(echo "$TRAVEL_FEED" | grep -oPm1 -e '(?<=<title><!\[CDATA\[).*?(?=\]\]></title>)' -e '(?<=<title>).*?(?=</title>)' | head -n 4 | tail -n 3)
+
+          # Combine all raw titles into a single block
+          RAW_COMBINED=$(printf "%s\n%s\n%s" "$SPORTS_TITLES" "$TECH_TITLES" "$TRAVEL_TITLES")
+
+          PROCESSED_NEWS=""
+
+          # Loop through each title to strip spaces and special characters
+          while IFS= read -r line; do
+            if [ -n "$line" ] && [ "$line" != "NYT > Sports" ] && [ "$line" != "NYT > Technology" ] && [ "$line" != "NYT > Travel" ]; then
+              # tr -cd 'a-zA-Z0-9' removes spaces, punctuation, and all special characters
+              CLEANED=$(echo "$line" | tr -cd 'a-zA-Z0-9')
+              
+              if [ -n "$CLEANED" ]; then
+                if [ -z "$PROCESSED_NEWS" ]; then
+                  PROCESSED_NEWS="$CLEANED"
+                else
+                  PROCESSED_NEWS="${PROCESSED_NEWS}|${CLEANED}"
+                fi
+              fi
+            fi
+          done <<< "$RAW_COMBINED"
+
+          # Write the completely cleaned string into News/News.txt
+          echo -n "$PROCESSED_NEWS" > News/News.txt
+          echo "Successfully formatted and saved news feed."
+
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add News/News.txt
+          
+          # Check if there are changes before committing to avoid workflow errors
+          if ! git diff --cached --quiet; then
+            git commit -m "Automated update: Sync news feed [skip ci]"
+            git push
+          else
+            echo "No new news changes detected."
+          fi
+          
